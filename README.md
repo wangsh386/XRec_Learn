@@ -4,11 +4,11 @@
 
 PyTorch implementation for [XRec: Large Language Models for Explainable Recommendation](http://arxiv.org/abs/2406.02377)
 
- >**XRec: Large Language Models for Explainable Recommendation**  
- >Qiyao Ma, Xubin Ren, Chao Huang*\
- >*Preprint 2024*
+> **XRec: Large Language Models for Explainable Recommendation**
+> Qiyao Ma, Xubin Ren, Chao Huang*
+> *Preprint 2024*
 
------
+---
 
 This paper presents a model-agnostic framework, **XRec**, that integrates the graph-based collaborative filtering framework with Large Language Models (LLMs) to generate comprehensive explanations for recommendations. By leveraging the inherent collaborative user-item relationships and harnessing the powerful textual generation capabilities of LLMs, XRec establishes a strong connection between collaborative signals and language semantics through the utilization of a Mixture of Experts (MoE) adapter.
 
@@ -66,9 +66,10 @@ Supported datasets:  `amazon`, `google`, `yelp`
 
 ## Example
 
-Below is a example of generating explanation for a specific user-item recommendation using the ``Yelp`` dataset.
+Below is an example of generating explanation for a specific user-item recommendation using the ``yelp`` dataset.
 
 ### Input
+
 - Item profile processed by GPT:
   ```
   MD Oriental Market, is summarized to attract Fans of Asian cuisine, individuals looking for a variety of Asian products, and those seeking unique and ethnic food items would enjoy MD Oriental Market. Customers interested in a well-organized, spacious, and clean grocery store with a diverse selection of Asian ingredients and products would also appreciate this location.
@@ -78,8 +79,9 @@ Below is a example of generating explanation for a specific user-item recommenda
   This user is likely to enjoy casual American comfort food, barbecue with various meat options and tasty sauces, high-quality dining experiences with tasting menus, and authentic Italian food and beverages in cozy atmospheres.
   ```
 - User/Item interaction history processed by Graph Neural Networks (GNNs)
-  
+
 ### Output
+
 - Explanation for the user-item recommendation:
   ```
   The user would enjoy this business for its vast selection of Asian ingredients, including fresh produce, sauces, condiments, and spices, making it a go-to for authentic and diverse cooking options.
@@ -98,7 +100,7 @@ Below is a example of generating explanation for a specific user-item recommenda
 │   ├── tst_pred.pkl                      # generated explanation
 │   └── tst_ref.pkl                       # ground truth explanation
 ├── encoder
-│   ├── models                            # graph neural network (GNN) structure
+│   ├── models                            # GNN structure
 │   ├── utils
 │   └── train_encoder.py                  # derive user/item embeddings
 ├── explainer
@@ -106,7 +108,7 @@ Below is a example of generating explanation for a specific user-item recommenda
 │   │   ├── explainer.py                  # XRec model
 │   │   └── modeling_explainer.py         # modified PyTorch LLaMA model
 │   ├── utils
-│   ├── main.py                           # employ XRec                
+│   ├── main.py                           # employ XRec  
 │   └── sample.py                         # see samples of generated explanations
 ├── generation
 │   ├── instructions                      # system prompts for user/item profile and
@@ -121,16 +123,18 @@ Below is a example of generating explanation for a specific user-item recommenda
 │   │   └── generate_profile.py
 │   └── explanation                       # generate ground truth explanation
 │       ├── exp_prompts.json
-│       ├── exp_system_prompts.json    
+│       ├── exp_system_prompts.json  
 │       └── generate_exp.py
 └── evaluation
     ├── main.py
-    ├── metrics.py               
+    ├── metrics.py   
     └── system_prompt.txt                  # system prompt for GPTScore
 ```
 
 ## Citation
+
 If you find XRec helpful to your research or applications, please kindly cite:
+
 ```bibtex
 @article{ma2024xrec,
   title={XRec: Large Language Models for Explainable Recommendation},
