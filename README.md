@@ -4,9 +4,11 @@
 
 PyTorch implementation for [XRec: Large Language Models for Explainable Recommendation](http://arxiv.org/abs/2406.02377)
 
+[2024.Sep]🎯🎯📢📢Our XRec is accepted by EMNLP'2024! Congrats to all XRec team! 🎉🎉🎉
+
 > **XRec: Large Language Models for Explainable Recommendation**\
 > Qiyao Ma, Xubin Ren, Chao Huang*\
-> *Preprint 2024*
+> *EMNLP 2024*
 
 -----
 
