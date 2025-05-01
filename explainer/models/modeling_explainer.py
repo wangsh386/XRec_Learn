@@ -1162,33 +1162,44 @@ class LlamaModel(LlamaPreTrainedModel):
         return causal_mask
 
 
+
 class LlamaForCausalLM(LlamaPreTrainedModel):
+    # 指定需要权重绑定的参数（lm_head.weight 通常与输入嵌入层共享权重）
     _tied_weights_keys = ["lm_head.weight"]
 
     def __init__(self, config):
         super().__init__(config)
+        # 初始化 LlamaModel 主体（transformer 结构）
         self.model = LlamaModel(config)
+        # 存储词汇表大小
         self.vocab_size = config.vocab_size
+        # 定义语言模型头（从隐藏状态映射到词汇表概率）
+        # 无偏置项，通常与输入嵌入共享权重
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-
-        # Initialize weights and apply final processing
+        # 初始化权重并执行后处理（如参数初始化）
         self.post_init()
 
+    # 获取输入嵌入层（用于外部访问）
     def get_input_embeddings(self):
         return self.model.embed_tokens
 
+    # 设置输入嵌入层（用于外部修改）
     def set_input_embeddings(self, value):
         self.model.embed_tokens = value
 
+    # 获取输出嵌入层（即 lm_head）
     def get_output_embeddings(self):
         return self.lm_head
 
+    # 设置输出嵌入层（可用于替换 lm_head）
     def set_output_embeddings(self, new_embeddings):
         self.lm_head = new_embeddings
 
+    # 设置解码器部分（整个 LlamaModel 可替换）
     def set_decoder(self, decoder):
         self.model = decoder
 
+    # 获取解码器部分
     def get_decoder(self):
         return self.model
 
@@ -1207,43 +1218,34 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        user_embed: Optional[torch.Tensor] = None,
-        item_embed: Optional[torch.Tensor] = None,
-        user_embed_pos: Optional[torch.Tensor] = None,
-        item_embed_pos: Optional[torch.Tensor] = None,
+        user_embed: Optional[torch.Tensor] = None,  # 用户嵌入（特定场景使用）
+        item_embed: Optional[torch.Tensor] = None,  # 物品嵌入（特定场景使用）
+        user_embed_pos: Optional[torch.Tensor] = None,  # 用户嵌入位置信息
+        item_embed_pos: Optional[torch.Tensor] = None,  # 物品嵌入位置信息
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
+        前向传播逻辑，用于训练或推理
+        
         Args:
-            labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-                Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
-                config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
-                (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
-
+            labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
+                用于计算掩码语言建模损失的标签。有效值范围 [0, vocab_size] 或 -100（忽略该 token）
         Returns:
+            CausalLMOutputWithPast 对象包含：
+                - loss: 损失值（如果有 labels）
+                - logits: 语言模型输出的 logits
+                - past_key_values: 缓存的键值对（用于生成）
+                - hidden_states: 隐藏层状态
+                - attentions: 注意力权重
+        """
 
-        Example:
-
-        ```python
-        >>> from transformers import AutoTokenizer, LlamaForCausalLM
-
-        >>> model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-2-7b-hf")
-        >>> tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
-
-        >>> prompt = "Hey, are you conscious? Can you talk to me?"
-        >>> inputs = tokenizer(prompt, return_tensors="pt")
-
-        >>> # Generate
-        >>> generate_ids = model.generate(inputs.input_ids, max_length=30)
-        >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-        "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
-        ```"""
+        # 处理输出选项（默认使用 config 中的配置）
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
+        # 调用 LlamaModel 进行前向传播
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -1261,32 +1263,43 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
             item_embed_pos=item_embed_pos,
         )
 
+        # 获取最后一层的隐藏状态
         hidden_states = outputs[0]
+
+        # 处理模型并行情况（按预训练时的 TP 分组计算）
         if self.config.pretraining_tp > 1:
             lm_head_slices = self.lm_head.weight.split(self.vocab_size // self.config.pretraining_tp, dim=0)
             logits = [F.linear(hidden_states, lm_head_slices[i]) for i in range(self.config.pretraining_tp)]
             logits = torch.cat(logits, dim=-1)
         else:
+            # 最终输出：通过 lm_head 将隐藏状态映射到词汇表概率
             logits = self.lm_head(hidden_states)
+
+        # 转换为浮点精度（避免数值问题）
         logits = logits.float()
 
+        # 计算损失（仅在训练时）
         loss = None
         if labels is not None:
-            # Shift so that tokens < n predict n
+            # 移位操作：使 token_i 预测 token_{i+1}
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
-            # Flatten the tokens
+
+            # 展平为二维张量（batch_size * seq_len, vocab_size）
             loss_fct = CrossEntropyLoss()
             shift_logits = shift_logits.view(-1, self.config.vocab_size)
             shift_labels = shift_labels.view(-1)
-            # Enable model parallelism
+
+            # 确保标签在相同设备上
             shift_labels = shift_labels.to(shift_logits.device)
             loss = loss_fct(shift_logits, shift_labels)
 
+        # 返回格式处理
         if not return_dict:
             output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
 
+        # 返回标准输出对象
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
@@ -1298,13 +1311,17 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
     def prepare_inputs_for_generation(
         self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, cache_position=None, **kwargs
     ):
-        # With static cache, the `past_key_values` is None
-        # TODO joao: standardize interface for the different Cache classes and remove of this if
+        """
+        为生成任务准备输入参数（如文本生成）
+        处理缓存、位置ID、注意力掩码等
+        """
+        # 检查是否使用静态缓存（未来可能统一接口）
         has_static_cache = False
         if past_key_values is None:
             past_key_values = getattr(getattr(self.model.layers[0], "self_attn", {}), "past_key_value", None)
             has_static_cache = past_key_values is not None
 
+        # 计算已缓存序列长度
         past_length = 0
         if past_key_values is not None:
             if isinstance(past_key_values, Cache):
@@ -1315,24 +1332,15 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
                     else None
                 )
                 cache_length = past_length if max_cache_length is None else torch.min(max_cache_length, past_length)
-            # TODO joao: remove this `else` after `generate` prioritizes `Cache` objects
             else:
                 cache_length = past_length = past_key_values[0][0].shape[2]
                 max_cache_length = None
 
-            # Keep only the unprocessed tokens:
-            # 1 - If the length of the attention_mask exceeds the length of input_ids, then we are in a setting where
-            # some of the inputs are exclusively passed as part of the cache (e.g. when passing input_embeds as
-            # input)
+            # 根据缓存长度调整 input_ids
             if attention_mask is not None and attention_mask.shape[1] > input_ids.shape[1]:
                 input_ids = input_ids[:, -(attention_mask.shape[1] - past_length) :]
-            # 2 - If the past_length is smaller than input_ids', then input_ids holds all input tokens. We can discard
-            # input_ids based on the past_length.
             elif past_length < input_ids.shape[1]:
                 input_ids = input_ids[:, past_length:]
-            # 3 - Otherwise (past_length >= input_ids.shape[1]), let's assume input_ids only has unprocessed tokens.
-
-            # If we are about to go beyond the maximum cache length, we need to crop the input attention mask.
             if (
                 max_cache_length is not None
                 and attention_mask is not None
@@ -1340,23 +1348,21 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
             ):
                 attention_mask = attention_mask[:, -max_cache_length:]
 
+        # 自动生成位置ID（如果没有提供）
         position_ids = kwargs.get("position_ids", None)
         if attention_mask is not None and position_ids is None:
-            # create position_ids on the fly for batch generation
             position_ids = attention_mask.long().cumsum(-1) - 1
             position_ids.masked_fill_(attention_mask == 0, 1)
             if past_key_values:
                 position_ids = position_ids[:, -input_ids.shape[1] :]
 
-        # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
+        # 处理输入嵌入（首次生成时使用）
         if inputs_embeds is not None and past_key_values is None:
             model_inputs = {"inputs_embeds": inputs_embeds}
         else:
-            # The `contiguous()` here is necessary to have a static stride during decoding. torchdynamo otherwise
-            # recompiles graphs as the stride of the inputs is a guard. Ref: https://github.com/huggingface/transformers/pull/29114
-            # TODO: use `next_tokens` directly instead.
             model_inputs = {"input_ids": input_ids.contiguous()}
 
+        # 计算缓存位置
         input_length = position_ids.shape[-1] if position_ids is not None else input_ids.shape[-1]
         if cache_position is None:
             cache_position = torch.arange(past_length, past_length + input_length, device=input_ids.device)
@@ -1366,6 +1372,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         if has_static_cache:
             past_key_values = None
 
+        # 更新模型输入参数
         model_inputs.update(
             {
                 "position_ids": position_ids,
@@ -1383,6 +1390,10 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
 
     @staticmethod
     def _reorder_cache(past_key_values, beam_idx):
+        """
+        重新排序缓存（用于束搜索）
+        根据 beam_idx 索引重新排列 key/value 缓存
+        """
         reordered_past = ()
         for layer_past in past_key_values:
             reordered_past += (
@@ -1390,22 +1401,6 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
             )
         return reordered_past
 
-
-@add_start_docstrings(
-    """
-    The LLaMa Model transformer with a sequence classification head on top (linear layer).
-
-    [`LlamaForSequenceClassification`] uses the last token in order to do the classification, as other causal models
-    (e.g. GPT-2) do.
-
-    Since it does classification on the last token, it requires to know the position of the last token. If a
-    `pad_token_id` is defined in the configuration, it finds the last token that is not a padding token in each row. If
-    no `pad_token_id` is defined, it simply takes the last value in each row of the batch. Since it cannot guess the
-    padding tokens when `inputs_embeds` are passed instead of `input_ids`, it does the same (take the last value in
-    each row of the batch).
-    """,
-    LLAMA_START_DOCSTRING,
-)
 class LlamaForSequenceClassification(LlamaPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
